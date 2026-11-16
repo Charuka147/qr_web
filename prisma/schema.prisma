@@ -1,0 +1,190 @@
+// QR Studio — Prisma schema mapped 1:1 onto the Supabase tables created by
+// supabase/migrations/001_initial_schema.sql.
+//
+// IMPORTANT: Prisma connects with the database owner role and therefore
+// BYPASSES Row Level Security. Every query made through Prisma MUST be scoped
+// server-side by the authenticated user's workspace (see src/lib/prisma-access.ts).
+// The browser must never receive DATABASE_URL.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkspaceRole {
+  owner
+  admin
+  member
+
+  @@map("workspace_role")
+}
+
+enum QrMode {
+  static
+  dynamic
+
+  @@map("qr_mode")
+}
+
+enum QrStatus {
+  active
+  paused
+  archived
+
+  @@map("qr_status")
+}
+
+model Profile {
+  id        String   @id @db.Uuid
+  email     String   @unique
+  fullName  String?  @map("full_name")
+  avatarUrl String?  @map("avatar_url")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  ownedWorkspaces Workspace[]       @relation("WorkspaceOwner")
+  memberships     WorkspaceMember[]
+
+  @@map("profiles")
+}
+
+model Workspace {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name      String
+  slug      String   @unique
+  ownerId   String   @map("owner_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  owner         Profile           @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members       WorkspaceMember[]
+  folders       Folder[]
+  qrCodes       QrCode[]
+  subscription  Subscription?
+  billingEvents BillingEvent[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole @default(member)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      Profile   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId], map: "idx_workspace_members_user")
+  @@map("workspace_members")
+}
+
+model Folder {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String
+  color       String?  @default("#2563EB")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  qrCodes   QrCode[]
+
+  @@map("folders")
+}
+
+model QrCode {
+  id             String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  folderId       String?   @map("folder_id") @db.Uuid
+  name           String
+  type           String
+  mode           QrMode    @default(static)
+  slug           String?   @unique
+  destinationUrl String?   @map("destination_url")
+  payload        Json      @default("{}")
+  design         Json      @default("{}")
+  status         QrStatus  @default(active)
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder    Folder?   @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  scans     QrScan[]
+
+  @@index([workspaceId], map: "idx_qr_codes_workspace")
+  @@index([folderId], map: "idx_qr_codes_folder")
+  @@map("qr_codes")
+}
+
+model QrScan {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  qrCodeId    String   @map("qr_code_id") @db.Uuid
+  scannedAt   DateTime @default(now()) @map("scanned_at") @db.Timestamptz(6)
+  ipHash      String?  @map("ip_hash")
+  userAgent   String?  @map("user_agent")
+  deviceType  String?  @map("device_type")
+  os          String?
+  browser     String?
+  countryCode String?  @map("country_code") @db.VarChar(2)
+  city        String?
+  referrer    String?
+
+  qrCode QrCode @relation(fields: [qrCodeId], references: [id], onDelete: Cascade)
+
+  @@index([qrCodeId, scannedAt(sort: Desc)], map: "idx_qr_scans_qr_time")
+  @@map("qr_scans")
+}
+
+model Plan {
+  id                   String   @id
+  name                 String
+  description          String?
+  monthlyPriceCents    Int      @default(0) @map("monthly_price_cents")
+  maxDynamicQrs        Int      @default(1) @map("max_dynamic_qrs")
+  maxScansPerMonth     Int      @default(100) @map("max_scans_per_month")
+  allowsCustomBranding Boolean? @default(false) @map("allows_custom_branding")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                   String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  workspaceId          String    @unique @map("workspace_id") @db.Uuid
+  planId               String    @default("free") @map("plan_id")
+  status               String    @default("active")
+  currentPeriodStart   DateTime? @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd     DateTime? @map("current_period_end") @db.Timestamptz(6)
+  cancelAtPeriodEnd    Boolean?  @default(false) @map("cancel_at_period_end")
+  stripeCustomerId     String?   @map("stripe_customer_id")
+  stripeSubscriptionId String?   @map("stripe_subscription_id")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan      Plan      @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}
+
+model BillingEvent {
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  eventType   String   @map("event_type")
+  payload     Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("billing_events")
+}
+

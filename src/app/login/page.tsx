@@ -43,8 +43,7 @@ function LoginForm() {
           ? redirectTo
           : "/dashboard";
 
-      router.push(safeRedirect);
-      router.refresh();
+      window.location.href = safeRedirect;
     } catch {
       setError("An unexpected error occurred. Please try again.");
     } finally {

@@ -60,8 +60,7 @@ export default function SignupPage() {
       }
 
       if (data.session) {
-        router.push("/dashboard");
-        router.refresh();
+        window.location.href = "/dashboard";
       } else {
         setSuccessMsg(
           "Account created! Please check your email inbox to confirm your address before signing in."
